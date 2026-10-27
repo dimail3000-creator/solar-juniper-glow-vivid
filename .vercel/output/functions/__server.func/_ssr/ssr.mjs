@@ -103,7 +103,7 @@ var HEADERS = { TSS_SHELL: "X-TSS_SHELL" };
 * the dev styles URL for route-scoped CSS collection.
 */
 async function getStartManifest(matchedRoutes) {
-	const { tsrStartManifest } = await import("../_tanstack-start-manifest_v-VBwfpWh4.mjs");
+	const { tsrStartManifest } = await import("../_tanstack-start-manifest_v-DnU-CeLv.mjs");
 	const startManifest = tsrStartManifest();
 	let routes = startManifest.routes;
 	routes[rootRouteId];
@@ -125,15 +125,19 @@ async function getStartManifest(matchedRoutes) {
 var manifest = {
 	"37ce827c1a1bc543a1b396d8fd93bac320c97e1c436046bb4690d65607b891b0": {
 		functionName: "dumpPostgres_createServerFn_handler",
-		importer: () => import("./live.functions-BDeYKWEU.mjs")
+		importer: () => import("./live.functions-Drh1p_u3.mjs")
 	},
 	"77cea8f8871a32830620ada5284809abb8f6d06a86642133428f0c21c4575375": {
 		functionName: "probePostgres_createServerFn_handler",
-		importer: () => import("./live.functions-BDeYKWEU.mjs")
+		importer: () => import("./live.functions-Drh1p_u3.mjs")
+	},
+	"af73ff3bbcae638eba2ad015abeebd3c82ba45a07d6985cb1996c5fbf249122b": {
+		functionName: "detectHostTools_createServerFn_handler",
+		importer: () => import("./live.functions-Drh1p_u3.mjs")
 	},
 	"b5e66b277df4a328740ba1c66e5f5fd295bfd026ad5802204e3d1f2353b45764": {
 		functionName: "restorePostgres_createServerFn_handler",
-		importer: () => import("./live.functions-BDeYKWEU.mjs")
+		importer: () => import("./live.functions-Drh1p_u3.mjs")
 	}
 };
 async function getServerFnById(id, access) {
@@ -1538,7 +1542,7 @@ var getBaseManifest = getProdBaseManifest;
 var createEarlyHintsForRequest = createEarlyHintsCollector;
 async function loadEntries() {
 	const [routerEntry, startEntry, pluginAdapters] = await Promise.all([
-		import("./router-CjvlLuU2.mjs").then((n) => n.t),
+		import("./router-Cxt5fcuV.mjs").then((n) => n.t),
 		import("./start-5Z2QO8AU.mjs"),
 		import("./empty-plugin-adapters-D9UWiqvJ.mjs")
 	]);

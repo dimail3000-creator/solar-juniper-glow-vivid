@@ -23,7 +23,7 @@ import {
   type ServerProfile,
   type VaultState,
 } from "@/lib/vault";
-import { dumpPostgres, probePostgres, restorePostgres } from "@/lib/live.functions";
+import { detectHostTools, dumpPostgres, probePostgres, restorePostgres } from "@/lib/live.functions";
 import { TOOL_META, TOOLS, backupPlan, restorePlan, type BackupTool } from "@/lib/tools";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -37,11 +37,15 @@ function Home() {
   const [restoreId, setRestoreId] = useState<string | null>(null);
   const [targetDb, setTargetDb] = useState("");
   const [tool, setTool] = useState<BackupTool>("pg_dump");
+  const [hostTools, setHostTools] = useState<Awaited<ReturnType<typeof detectHostTools>> | null>(null);
 
   useEffect(() => {
     const loaded = loadState();
     setState(loaded);
     setSelectedId(loaded.servers[0]?.id ?? "");
+    void detectHostTools()
+      .then(setHostTools)
+      .catch(() => setHostTools({ clients: [], tools: [] }));
   }, []);
 
   function commit(next: VaultState) {
@@ -195,11 +199,20 @@ function Home() {
       owner: profile.user,
       tables: [],
     }));
+    const major = Math.floor(result.serverVersionNum / 10000);
+    const pgVersion = (PG_VERSIONS as readonly number[]).includes(major) ? (major as PgVersion) : profile.pgVersion;
     commit({
       ...state,
-      servers: state.servers.map((item) => (item.id === profile.id ? { ...item, databases } : item)),
+      servers: state.servers.map((item) =>
+        item.id === profile.id ? { ...item, databases, pgVersion } : item,
+      ),
     });
-    setNotice(`Узел доступен, баз: ${databases.map((d) => d.name).join(", ")}`);
+    const client = hostTools?.clients.find((item) => item.major === major);
+    setNotice(
+      client
+        ? `PostgreSQL ${major} на узле, клиент pg_dump ${major} найден`
+        : `PostgreSQL ${major} на узле. Подходящий клиент pg_dump на этом хосте не найден. Баз: ${databases.length}`,
+    );
   }
 
   function removeServer(id: string) {
@@ -251,6 +264,28 @@ function Home() {
           </button>
         </div>
       </header>
+      <section className="border-b border-border px-4 py-3 sm:px-8">
+        <div className="mx-auto flex max-w-6xl flex-col gap-2">
+          <p className="text-xs text-muted">Средства на этом хосте</p>
+          <div className="flex flex-wrap gap-2">
+            {(hostTools?.tools ?? TOOLS.map((id) => ({ id, installed: false, version: null }))).map((item) => (
+              <span
+                key={item.id}
+                className={`rounded-lg border px-3 py-2 text-xs ${
+                  item.installed ? "border-primary text-fg" : "border-border text-muted"
+                }`}
+              >
+                {TOOL_META[item.id].title}: {item.installed ? item.version : "не установлено"}
+              </span>
+            ))}
+          </div>
+          <p className="text-xs text-muted">
+            {hostTools && hostTools.clients.length > 0
+              ? `Клиенты pg_dump: ${hostTools.clients.map((item) => String(item.major)).join(", ")}`
+              : "Клиенты pg_dump в /usr/lib/postgresql не найдены. Версия узла всё равно читается по SHOW server_version_num."}
+          </p>
+        </div>
+      </section>
 
       <div className="mx-auto grid max-w-6xl gap-4 px-4 py-5 sm:px-8 lg:grid-cols-[240px_1fr]">
         <section className="grid grid-cols-3 gap-2 lg:col-span-2">

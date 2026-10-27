@@ -1,6 +1,6 @@
 import { n as TSS_SERVER_FUNCTION, t as createServerFn } from "./ssr.mjs";
 import { a as string, i as object, r as number, t as boolean } from "../_libs/zod.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/live.functions-BDeYKWEU.js
+//#region node_modules/.nitro/vite/services/ssr/assets/live.functions-Drh1p_u3.js
 var createServerRpc = (serverFnMeta, splitImportFn) => {
 	const url = "/_serverFn/" + serverFnMeta.id;
 	return Object.assign(splitImportFn, {
@@ -45,12 +45,17 @@ var probePostgres = createServerFn({ method: "POST" }).validator(connSchema).han
 	try {
 		return {
 			ok: true,
-			databases: await withClient(data, async (client) => {
-				return (await client.query(`SELECT d.datname,
+			...await withClient(data, async (client) => {
+				const res = await client.query(`SELECT d.datname,
                   pg_size_pretty(pg_database_size(d.datname)) AS size
              FROM pg_database d
             WHERE d.datistemplate = false
-            ORDER BY 1`)).rows;
+            ORDER BY 1`);
+				const version = await client.query("SHOW server_version_num");
+				return {
+					databases: res.rows,
+					serverVersionNum: Number(version.rows[0]?.server_version_num ?? 0)
+				};
 			})
 		};
 	} catch (error) {
@@ -148,5 +153,91 @@ function sqlLiteral(value) {
 	if (typeof value === "object") return `'${JSON.stringify(value).replaceAll("'", "''")}'`;
 	return `'${String(value).replaceAll("'", "''")}'`;
 }
+async function firstLine(exec, bin, args) {
+	try {
+		const { stdout, stderr } = await exec(bin, args);
+		const line = `${stdout}\n${stderr}`.split("\n").map((item) => item.trim()).find(Boolean);
+		return line ? line.slice(0, 180) : null;
+	} catch {
+		return null;
+	}
+}
+var detectHostTools_createServerFn_handler = createServerRpc({
+	id: "af73ff3bbcae638eba2ad015abeebd3c82ba45a07d6985cb1996c5fbf249122b",
+	name: "detectHostTools",
+	filename: "src/lib/live.functions.ts"
+}, (opts) => detectHostTools.__executeServer(opts));
+var detectHostTools = createServerFn({ method: "GET" }).handler(detectHostTools_createServerFn_handler, async () => {
+	const { execFile } = await import("node:child_process");
+	const { readdir } = await import("node:fs/promises");
+	const { promisify } = await import("node:util");
+	const exec = promisify(execFile);
+	const run = (bin, args) => exec(bin, args, { timeout: 4e3 }).then((result) => ({
+		stdout: String(result.stdout),
+		stderr: String(result.stderr)
+	}));
+	const clients = [];
+	let entries = [];
+	try {
+		entries = await readdir("/usr/lib/postgresql");
+	} catch {
+		entries = [];
+	}
+	for (const entry of entries) {
+		const major = Number(entry);
+		if (!Number.isInteger(major)) continue;
+		const path = `/usr/lib/postgresql/${entry}/bin/pg_dump`;
+		const version = await firstLine(run, path, ["--version"]);
+		if (version) clients.push({
+			major,
+			path,
+			version
+		});
+	}
+	const pathDump = await firstLine(run, "pg_dump", ["--version"]);
+	if (pathDump && !clients.some((item) => item.version === pathDump)) {
+		const major = Number(pathDump.match(/\b(\d+)\.\d+/)?.[1] ?? 0);
+		clients.push({
+			major,
+			path: "pg_dump",
+			version: pathDump
+		});
+	}
+	const checks = [
+		{
+			id: "pg_dump",
+			bin: "pg_dump",
+			args: ["--version"]
+		},
+		{
+			id: "pgbackrest",
+			bin: "pgbackrest",
+			args: ["version"]
+		},
+		{
+			id: "barman",
+			bin: "barman",
+			args: ["-v"]
+		},
+		{
+			id: "wal-g",
+			bin: "wal-g",
+			args: ["--version"]
+		}
+	];
+	const tools = [];
+	for (const check of checks) {
+		const version = check.id === "pg_dump" && pathDump ? pathDump : await firstLine(run, check.bin, check.args);
+		tools.push({
+			id: check.id,
+			installed: Boolean(version),
+			version
+		});
+	}
+	return {
+		clients,
+		tools
+	};
+});
 //#endregion
-export { dumpPostgres_createServerFn_handler, probePostgres_createServerFn_handler, restorePostgres_createServerFn_handler };
+export { detectHostTools_createServerFn_handler, dumpPostgres_createServerFn_handler, probePostgres_createServerFn_handler, restorePostgres_createServerFn_handler };

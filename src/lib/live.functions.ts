@@ -37,7 +37,7 @@ export const probePostgres = createServerFn({ method: "POST" })
   .validator(connSchema)
   .handler(async ({ data }) => {
     try {
-      const databases = await withClient(data, async (client) => {
+      const found = await withClient(data, async (client) => {
         const res = await client.query<{ datname: string; size: string }>(
           `SELECT d.datname,
                   pg_size_pretty(pg_database_size(d.datname)) AS size
@@ -45,9 +45,13 @@ export const probePostgres = createServerFn({ method: "POST" })
             WHERE d.datistemplate = false
             ORDER BY 1`,
         );
-        return res.rows;
+        const version = await client.query<{ server_version_num: string }>("SHOW server_version_num");
+        return {
+          databases: res.rows,
+          serverVersionNum: Number(version.rows[0]?.server_version_num ?? 0),
+        };
       });
-      return { ok: true as const, databases };
+      return { ok: true as const, ...found };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Не удалось подключиться";
       return { ok: false as const, error: message };
@@ -152,3 +156,68 @@ function sqlLiteral(value: unknown): string {
   if (typeof value === "object") return `'${JSON.stringify(value).replaceAll("'", "''")}'`;
   return `'${String(value).replaceAll("'", "''")}'`;
 }
+
+async function firstLine(
+  exec: (bin: string, args: string[]) => Promise<{ stdout: string; stderr: string }>,
+  bin: string,
+  args: string[],
+): Promise<string | null> {
+  try {
+    const { stdout, stderr } = await exec(bin, args);
+    const line = `${stdout}\n${stderr}`
+      .split("\n")
+      .map((item) => item.trim())
+      .find(Boolean);
+    return line ? line.slice(0, 180) : null;
+  } catch {
+    return null;
+  }
+}
+
+export const detectHostTools = createServerFn({ method: "GET" }).handler(async () => {
+  const { execFile } = await import("node:child_process");
+  const { readdir } = await import("node:fs/promises");
+  const { promisify } = await import("node:util");
+  const exec = promisify(execFile);
+  const run = (bin: string, args: string[]) =>
+    exec(bin, args, { timeout: 4000 }).then((result) => ({
+      stdout: String(result.stdout),
+      stderr: String(result.stderr),
+    }));
+  const clients: { major: number; path: string; version: string }[] = [];
+  let entries: string[] = [];
+  try {
+    entries = await readdir("/usr/lib/postgresql");
+  } catch {
+    entries = [];
+  }
+  for (const entry of entries) {
+    const major = Number(entry);
+    if (!Number.isInteger(major)) continue;
+    const path = `/usr/lib/postgresql/${entry}/bin/pg_dump`;
+    const version = await firstLine(run, path, ["--version"]);
+    if (version) clients.push({ major, path, version });
+  }
+  const pathDump = await firstLine(run, "pg_dump", ["--version"]);
+  if (pathDump && !clients.some((item) => item.version === pathDump)) {
+    const major = Number(pathDump.match(/\b(\d+)\.\d+/)?.[1] ?? 0);
+    clients.push({ major, path: "pg_dump", version: pathDump });
+  }
+
+  const checks: { id: "pg_dump" | "pgbackrest" | "barman" | "wal-g"; bin: string; args: string[] }[] = [
+    { id: "pg_dump", bin: "pg_dump", args: ["--version"] },
+    { id: "pgbackrest", bin: "pgbackrest", args: ["version"] },
+    { id: "barman", bin: "barman", args: ["-v"] },
+    { id: "wal-g", bin: "wal-g", args: ["--version"] },
+  ];
+  const tools = [];
+  for (const check of checks) {
+    const version = check.id === "pg_dump" && pathDump ? pathDump : await firstLine(run, check.bin, check.args);
+    tools.push({
+      id: check.id,
+      installed: Boolean(version),
+      version,
+    });
+  }
+  return { clients, tools };
+});

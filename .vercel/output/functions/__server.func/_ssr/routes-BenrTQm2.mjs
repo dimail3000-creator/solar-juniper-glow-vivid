@@ -3,7 +3,7 @@ import { b as require_jsx_runtime, q as require_react } from "../_libs/@tanstack
 import { n as TSS_SERVER_FUNCTION, r as getServerFnById, t as createServerFn } from "./ssr.mjs";
 import { a as string, i as object, r as number, t as boolean } from "../_libs/zod.mjs";
 import { a as Server, c as HardDrive, i as ShieldCheck, l as Download, o as RotateCcw, r as Trash2, s as Plus, t as X, u as Database } from "../_libs/lucide-react.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-BG9zbRod.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-BenrTQm2.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var PG_VERSIONS = [
@@ -284,6 +284,7 @@ var dumpSchema = connSchema.extend({ maxRows: number().int().min(1).max(200).def
 var dumpPostgres = createServerFn({ method: "POST" }).validator(dumpSchema).handler(createSsrRpc("37ce827c1a1bc543a1b396d8fd93bac320c97e1c436046bb4690d65607b891b0"));
 var restoreSchema = connSchema.extend({ sql: string().min(1).max(15e5) });
 var restorePostgres = createServerFn({ method: "POST" }).validator(restoreSchema).handler(createSsrRpc("b5e66b277df4a328740ba1c66e5f5fd295bfd026ad5802204e3d1f2353b45764"));
+var detectHostTools = createServerFn({ method: "GET" }).handler(createSsrRpc("af73ff3bbcae638eba2ad015abeebd3c82ba45a07d6985cb1996c5fbf249122b"));
 var TOOLS = [
 	"pg_dump",
 	"pgbackrest",
@@ -382,10 +383,15 @@ function Home() {
 	const [restoreId, setRestoreId] = (0, import_react.useState)(null);
 	const [targetDb, setTargetDb] = (0, import_react.useState)("");
 	const [tool, setTool] = (0, import_react.useState)("pg_dump");
+	const [hostTools, setHostTools] = (0, import_react.useState)(null);
 	(0, import_react.useEffect)(() => {
 		const loaded = loadState();
 		setState(loaded);
 		setSelectedId(loaded.servers[0]?.id ?? "");
+		detectHostTools().then(setHostTools).catch(() => setHostTools({
+			clients: [],
+			tools: []
+		}));
 	}, []);
 	function commit(next) {
 		setState(next);
@@ -531,14 +537,18 @@ function Home() {
 			owner: profile.user,
 			tables: []
 		}));
+		const major = Math.floor(result.serverVersionNum / 1e4);
+		const pgVersion = PG_VERSIONS.includes(major) ? major : profile.pgVersion;
 		commit({
 			...state,
 			servers: state.servers.map((item) => item.id === profile.id ? {
 				...item,
-				databases
+				databases,
+				pgVersion
 			} : item)
 		});
-		setNotice(`Узел доступен, баз: ${databases.map((d) => d.name).join(", ")}`);
+		const client = hostTools?.clients.find((item) => item.major === major);
+		setNotice(client ? `PostgreSQL ${major} на узле, клиент pg_dump ${major} найден` : `PostgreSQL ${major} на узле. Подходящий клиент pg_dump на этом хосте не найден. Баз: ${databases.length}`);
 	}
 	function removeServer(id) {
 		if (!state) return;
@@ -596,6 +606,37 @@ function Home() {
 						className: "inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-fg",
 						children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Plus, { className: "size-4" }), "Свой узел"]
 					})]
+				})
+			}),
+			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", {
+				className: "border-b border-border px-4 py-3 sm:px-8",
+				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+					className: "mx-auto flex max-w-6xl flex-col gap-2",
+					children: [
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-xs text-muted",
+							children: "Средства на этом хосте"
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+							className: "flex flex-wrap gap-2",
+							children: (hostTools?.tools ?? TOOLS.map((id) => ({
+								id,
+								installed: false,
+								version: null
+							}))).map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+								className: `rounded-lg border px-3 py-2 text-xs ${item.installed ? "border-primary text-fg" : "border-border text-muted"}`,
+								children: [
+									TOOL_META[item.id].title,
+									": ",
+									item.installed ? item.version : "не установлено"
+								]
+							}, item.id))
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "text-xs text-muted",
+							children: hostTools && hostTools.clients.length > 0 ? `Клиенты pg_dump: ${hostTools.clients.map((item) => String(item.major)).join(", ")}` : "Клиенты pg_dump в /usr/lib/postgresql не найдены. Версия узла всё равно читается по SHOW server_version_num."
+						})
+					]
 				})
 			}),
 			/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
