@@ -8,7 +8,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Контур — бэкап PostgreSQL" },
+      { title: "Hamster — бэкап PostgreSQL" },
       { name: "theme-color", content: "#101410" },
     ],
     links: [

@@ -103,7 +103,7 @@ var HEADERS = { TSS_SHELL: "X-TSS_SHELL" };
 * the dev styles URL for route-scoped CSS collection.
 */
 async function getStartManifest(matchedRoutes) {
-	const { tsrStartManifest } = await import("../_tanstack-start-manifest_v-DnU-CeLv.mjs");
+	const { tsrStartManifest } = await import("../_tanstack-start-manifest_v-D6lyb19q.mjs");
 	const startManifest = tsrStartManifest();
 	let routes = startManifest.routes;
 	routes[rootRouteId];
@@ -123,21 +123,45 @@ async function getStartManifest(matchedRoutes) {
 	};
 }
 var manifest = {
+	"17079bfeef4d72b4dbd7500e8831f390427d23e11e08fae3ebc419f106677afb": {
+		functionName: "inspectDbServer_createServerFn_handler",
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
+	},
+	"17cc573b55325613c494f1c520eeeb50f87fd240526482abad6971811252b883": {
+		functionName: "rotateBackups_createServerFn_handler",
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
+	},
 	"37ce827c1a1bc543a1b396d8fd93bac320c97e1c436046bb4690d65607b891b0": {
 		functionName: "dumpPostgres_createServerFn_handler",
-		importer: () => import("./live.functions-Drh1p_u3.mjs")
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
+	},
+	"588b01f32a917835661b7bdd0f3342dc1ff06a1df4483faa164109ba13e15c84": {
+		functionName: "listKonturBackups_createServerFn_handler",
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
+	},
+	"63d64fa65d532eb8f1191f213d79776760c81dcf26b90bd06fa84e564c12776f": {
+		functionName: "diskFree_createServerFn_handler",
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
+	},
+	"688b826871ac30804be0ad165b62a297c7da99b9e7f9fb69c155158ea7d40191": {
+		functionName: "readKonturBackup_createServerFn_handler",
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
+	},
+	"731ecb66f2457d728b22819c3164d7f701c064488939d0c5e6d5051a5e5d2775": {
+		functionName: "storeKonturBackup_createServerFn_handler",
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
 	},
 	"77cea8f8871a32830620ada5284809abb8f6d06a86642133428f0c21c4575375": {
 		functionName: "probePostgres_createServerFn_handler",
-		importer: () => import("./live.functions-Drh1p_u3.mjs")
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
 	},
 	"af73ff3bbcae638eba2ad015abeebd3c82ba45a07d6985cb1996c5fbf249122b": {
 		functionName: "detectHostTools_createServerFn_handler",
-		importer: () => import("./live.functions-Drh1p_u3.mjs")
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
 	},
 	"b5e66b277df4a328740ba1c66e5f5fd295bfd026ad5802204e3d1f2353b45764": {
 		functionName: "restorePostgres_createServerFn_handler",
-		importer: () => import("./live.functions-Drh1p_u3.mjs")
+		importer: () => import("./live.functions-BvQ8SBC_.mjs")
 	}
 };
 async function getServerFnById(id, access) {
@@ -1542,7 +1566,7 @@ var getBaseManifest = getProdBaseManifest;
 var createEarlyHintsForRequest = createEarlyHintsCollector;
 async function loadEntries() {
 	const [routerEntry, startEntry, pluginAdapters] = await Promise.all([
-		import("./router-Cxt5fcuV.mjs").then((n) => n.t),
+		import("./router-Da68gsku.mjs").then((n) => n.t),
 		import("./start-5Z2QO8AU.mjs"),
 		import("./empty-plugin-adapters-D9UWiqvJ.mjs")
 	]);

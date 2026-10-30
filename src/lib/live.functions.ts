@@ -204,11 +204,11 @@ export const detectHostTools = createServerFn({ method: "GET" }).handler(async (
     clients.push({ major, path: "pg_dump", version: pathDump });
   }
 
-  const checks: { id: "pg_dump" | "pgbackrest" | "barman" | "wal-g"; bin: string; args: string[] }[] = [
+  const checks: { id: "pg_dump" | "pgbackrest" | "barman" | "pg_probackup"; bin: string; args: string[] }[] = [
     { id: "pg_dump", bin: "pg_dump", args: ["--version"] },
     { id: "pgbackrest", bin: "pgbackrest", args: ["version"] },
     { id: "barman", bin: "barman", args: ["-v"] },
-    { id: "wal-g", bin: "wal-g", args: ["--version"] },
+    { id: "pg_probackup", bin: "pg_probackup", args: ["--version"] },
   ];
   const tools = [];
   for (const check of checks) {
@@ -221,3 +221,215 @@ export const detectHostTools = createServerFn({ method: "GET" }).handler(async (
   }
   return { clients, tools };
 });
+
+const sshSchema = z.object({
+  host: z.string().regex(/^[A-Za-z0-9._-]{1,253}$/),
+  sshPort: z.number().int().min(1).max(65535),
+  sshUser: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/i),
+});
+
+const ident = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/);
+
+function sshArgs(data: z.infer<typeof sshSchema>, remote: string[]): string[] {
+  return [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-o",
+    "ConnectTimeout=8",
+    "-p",
+    String(data.sshPort),
+    `${data.sshUser}@${data.host}`,
+    ...remote,
+  ];
+}
+
+async function runSsh(data: z.infer<typeof sshSchema>, remote: string[], maxBuffer = 1_000_000) {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const exec = promisify(execFile);
+  return exec("ssh", sshArgs(data, remote), { timeout: 20000, maxBuffer });
+}
+
+export const inspectDbServer = createServerFn({ method: "POST" })
+  .validator(sshSchema)
+  .handler(async ({ data }) => {
+    const script = [
+      "for b in pg_dump pgbackrest barman pg_probackup; do",
+      "  if command -v \"$b\" >/dev/null 2>&1; then",
+      "    printf '%s\\t' \"$b\"",
+      "    case \"$b\" in",
+      "      pgbackrest) pgbackrest version 2>&1 | head -n 1 ;;",
+      "      pg_probackup) pg_probackup --version 2>&1 | head -n 1 ;;",
+      "      barman) barman -v 2>&1 | head -n 1 ;;",
+      "      *) \"$b\" --version 2>&1 | head -n 1 ;;",
+      "    esac",
+      "  else",
+      "    printf '%s\\tmissing\\n' \"$b\"",
+      "  fi",
+      "done",
+    ].join("\n");
+    try {
+      const { stdout } = await runSsh(data, ["sh", "-c", script]);
+      const tools = String(stdout)
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [id, ...rest] = line.split("\t");
+          const version = rest.join("\t").trim();
+          return {
+            id: id as "pg_dump" | "pgbackrest" | "barman" | "pg_probackup",
+            installed: version !== "missing" && version.length > 0,
+            version: version === "missing" ? null : version.slice(0, 180),
+          };
+        });
+      return { ok: true as const, tools };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "SSH к серверу баз не удался";
+      return { ok: false as const, error: message };
+    }
+  });
+
+const storeSchema = z.object({
+  serverName: z.string().trim().min(1).max(80),
+  database: ident,
+  tool: z.enum(["pg_dump", "pgbackrest", "barman", "pg_probackup"]),
+  kind: z.enum(["full", "incr"]),
+  body: z.string().max(4_000_000),
+});
+
+function backupRoot() {
+  return `${process.cwd()}/data/backups`;
+}
+
+function safeSegment(value: string) {
+  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80);
+}
+
+export const storeKonturBackup = createServerFn({ method: "POST" })
+  .validator(storeSchema)
+  .handler(async ({ data }) => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dir = `${backupRoot()}/${safeSegment(data.serverName)}/${stamp}-${safeSegment(data.database)}-${data.tool}-${data.kind}`;
+    await mkdir(dir, { recursive: true });
+    const ext = data.tool === "pg_dump" ? "sql" : "log";
+    const file = `${dir}/backup.${ext}`;
+    const meta = [
+      `tool=${data.tool}`,
+      `kind=${data.kind}`,
+      `database=${data.database}`,
+      `server=${data.serverName}`,
+      `created=${new Date().toISOString()}`,
+      "",
+    ].join("\n");
+    await writeFile(`${dir}/meta.txt`, meta, "utf8");
+    await writeFile(file, data.body, "utf8");
+    return { ok: true as const, path: dir, bytes: Buffer.byteLength(data.body) + Buffer.byteLength(meta) };
+  });
+
+export const listKonturBackups = createServerFn({ method: "GET" }).handler(async () => {
+  const { readdir, stat } = await import("node:fs/promises");
+  const root = backupRoot();
+  try {
+    const servers = await readdir(root);
+    const files: { path: string; bytes: number; mtime: string }[] = [];
+    for (const server of servers) {
+      const dir = `${root}/${server}`;
+      const names = await readdir(dir);
+      for (const name of names) {
+        const path = `${dir}/${name}`;
+        const info = await stat(path);
+        if (!info.isDirectory()) continue;
+        const inner = await readdir(path);
+        let bytes = 0;
+        for (const file of inner) {
+          const fileInfo = await stat(`${path}/${file}`);
+          if (fileInfo.isFile()) bytes += fileInfo.size;
+        }
+        files.push({ path, bytes, mtime: info.mtime.toISOString() });
+      }
+    }
+    files.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+    return { ok: true as const, files: files.slice(0, 40) };
+  } catch {
+    return { ok: true as const, files: [] as { path: string; bytes: number; mtime: string }[] };
+  }
+});
+
+export const diskFree = createServerFn({ method: "GET" }).handler(async () => {
+  const { statfs } = await import("node:fs/promises");
+  const { mkdir } = await import("node:fs/promises");
+  const root = backupRoot();
+  await mkdir(root, { recursive: true });
+  const stats = await statfs(root);
+  const block = Number(stats.bsize);
+  return {
+    path: root,
+    total: block * Number(stats.blocks),
+    free: block * Number(stats.bavail),
+  };
+});
+
+export const rotateBackups = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      keep: z.number().int().min(1).max(100),
+      serverName: z.string().trim().min(1).max(80).optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const { readdir, stat, rm } = await import("node:fs/promises");
+    const root = backupRoot();
+    const scope = data.serverName ? `${root}/${safeSegment(data.serverName)}` : root;
+    const dirs: { path: string; mtime: number }[] = [];
+    try {
+      if (data.serverName) {
+        for (const name of await readdir(scope)) {
+          const path = `${scope}/${name}`;
+          const info = await stat(path);
+          if (info.isDirectory()) dirs.push({ path, mtime: info.mtimeMs });
+        }
+      } else {
+        for (const server of await readdir(root)) {
+          const serverDir = `${root}/${server}`;
+          for (const name of await readdir(serverDir)) {
+            const path = `${serverDir}/${name}`;
+            const info = await stat(path);
+            if (info.isDirectory()) dirs.push({ path, mtime: info.mtimeMs });
+          }
+        }
+      }
+    } catch {
+      return { ok: true as const, removed: 0 };
+    }
+    dirs.sort((a, b) => b.mtime - a.mtime);
+    const stale = dirs.slice(data.keep);
+    for (const dir of stale) await rm(dir.path, { recursive: true, force: true });
+    return { ok: true as const, removed: stale.length };
+  });
+
+const readSchema = z.object({ path: z.string().min(1).max(300) });
+
+export const readKonturBackup = createServerFn({ method: "POST" })
+  .validator(readSchema)
+  .handler(async ({ data }) => {
+    const root = backupRoot();
+    if (!data.path.startsWith(`${root}/`) || data.path.includes("..")) {
+      return { ok: false as const, error: "Путь вне хранилища Hamster" };
+    }
+    const { readFile, readdir } = await import("node:fs/promises");
+    let file = data.path;
+    try {
+      const names = await readdir(data.path);
+      const payload = names.find((name) => name.startsWith("backup."));
+      if (payload) file = `${data.path}/${payload}`;
+    } catch {
+      file = data.path;
+    }
+    const body = await readFile(file, "utf8");
+    return { ok: true as const, body };
+  });
+

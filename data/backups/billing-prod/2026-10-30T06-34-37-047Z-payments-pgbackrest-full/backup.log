@@ -1,0 +1,4 @@
+#!/bin/sh
+# pgBackRest stanza billing-prod, PostgreSQL 16, full
+pgbackrest --stanza=billing-prod --type=full backup
+pgbackrest --stanza=billing-prod info

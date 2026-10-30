@@ -1,24 +1,25 @@
 import type { ServerProfile } from "@/lib/vault";
 
-export const TOOLS = ["pg_dump", "pgbackrest", "barman", "wal-g"] as const;
+export const TOOLS = ["pg_dump", "pgbackrest", "barman", "pg_probackup"] as const;
 export type BackupTool = (typeof TOOLS)[number];
+export type BackupKind = "full" | "incr";
 
 export const TOOL_META: Record<BackupTool, { title: string; blurb: string }> = {
   pg_dump: {
     title: "pg_dump",
-    blurb: "Логический дамп одной базы. Восстановление через psql.",
+    blurb: "Логический дамп одной базы. Инкрементов нет — всегда полный.",
   },
   pgbackrest: {
     title: "pgBackRest",
-    blurb: "Полные и инкрементальные копии со stanza и PITR.",
+    blurb: "Полные и инкрементальные копии, stanza и PITR.",
   },
   barman: {
     title: "Barman",
-    blurb: "Централизованный бэкап и recover на указанный момент.",
+    blurb: "Полный бэкап или инкремент через reuse-backup.",
   },
-  "wal-g": {
-    title: "wal-g",
-    blurb: "Непрерывная архивация WAL и backup-push в объектное хранилище.",
+  pg_probackup: {
+    title: "pg_probackup",
+    blurb: "Полный или DELTA в собственном каталоге экземпляра.",
   },
 };
 
@@ -34,13 +35,20 @@ function shQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export function backupPlan(tool: BackupTool, server: ServerProfile, database: string): string {
+export function backupPlan(
+  tool: BackupTool,
+  server: ServerProfile,
+  database: string,
+  kind: BackupKind,
+): string {
   const name = stanza(server);
   const host = `${server.host}:${server.port}`;
+  const mode = kind === "incr" ? "incr" : "full";
   if (tool === "pg_dump") {
     return [
       `#!/bin/sh`,
       `# pg_dump ${server.pgVersion} — ${server.name} / ${database}`,
+      `# запрошен ${mode}; pg_dump всегда пишет полный дамп`,
       `export PGPASSWORD=${shQuote(server.password)}`,
       `${clientBin(server, "pg_dump")} --host=${shQuote(server.host)} --port=${server.port} --username=${shQuote(server.user)} \\`,
       `  --format=custom --file=${shQuote(`${database}.dump`)} ${shQuote(database)}`,
@@ -50,25 +58,26 @@ export function backupPlan(tool: BackupTool, server: ServerProfile, database: st
   if (tool === "pgbackrest") {
     return [
       `#!/bin/sh`,
-      `# pgBackRest stanza ${name}, PostgreSQL ${server.pgVersion}`,
-      `pgbackrest --stanza=${name} --type=full backup`,
+      `# pgBackRest stanza ${name}, PostgreSQL ${server.pgVersion}, ${mode}`,
+      `pgbackrest --stanza=${name} --type=${mode} backup`,
       `pgbackrest --stanza=${name} info`,
     ].join("\n");
   }
   if (tool === "barman") {
     return [
       `#!/bin/sh`,
-      `# Barman server ${name}, PostgreSQL ${server.pgVersion}`,
+      `# Barman server ${name}, PostgreSQL ${server.pgVersion}, ${mode}`,
       `barman check ${name}`,
-      `barman backup ${name}`,
+      kind === "incr" ? `barman backup --reuse-backup=link ${name}` : `barman backup ${name}`,
       `barman list-backup ${name}`,
     ].join("\n");
   }
+  const pbMode = kind === "incr" ? "DELTA" : "FULL";
   return [
     `#!/bin/sh`,
-    `# wal-g backup-push — PostgreSQL ${server.pgVersion}, ${database} @ ${host}`,
-    `wal-g backup-push ${shQuote(`/var/lib/postgresql/${server.pgVersion}/main`)}`,
-    `wal-g backup-list`,
+    `# pg_probackup ${pbMode} — ${database} @ ${host}`,
+    `pg_probackup backup -B /var/lib/pg_probackup --instance=${name} -b ${pbMode}`,
+    `pg_probackup show -B /var/lib/pg_probackup --instance=${name}`,
   ].join("\n");
 }
 
@@ -102,10 +111,11 @@ export function restorePlan(
       `barman recover ${name} "$BACKUP" /var/lib/postgresql/restore/${target}`,
     ].join("\n");
   }
+  const pbMode = "FULL";
   return [
     `#!/bin/sh`,
-    `BACKUP=$(wal-g backup-list | awk 'NR==2 {print $1}')`,
-    `wal-g backup-fetch /var/lib/postgresql/restore/${target} "$BACKUP"`,
+    `pg_probackup restore -B /var/lib/pg_probackup --instance=${name} -D /var/lib/postgresql/restore/${target} -i latest`,
+    `# режим каталога ${pbMode}`,
   ].join("\n");
 }
 

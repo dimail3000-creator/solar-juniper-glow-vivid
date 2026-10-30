@@ -1,9 +1,9 @@
 import { o as __toESM } from "../_runtime.mjs";
 import { b as require_jsx_runtime, q as require_react } from "../_libs/@tanstack/react-router+[...].mjs";
 import { n as TSS_SERVER_FUNCTION, r as getServerFnById, t as createServerFn } from "./ssr.mjs";
-import { a as string, i as object, r as number, t as boolean } from "../_libs/zod.mjs";
+import { a as object, i as number, n as boolean, o as string, t as _enum } from "../_libs/zod.mjs";
 import { a as Server, c as HardDrive, i as ShieldCheck, l as Download, o as RotateCcw, r as Trash2, s as Plus, t as X, u as Database } from "../_libs/lucide-react.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/routes-BenrTQm2.js
+//#region node_modules/.nitro/vite/services/ssr/assets/routes-BRoyOrMR.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var PG_VERSIONS = [
@@ -13,6 +13,14 @@ var PG_VERSIONS = [
 	17,
 	18
 ];
+var defaultSchedule = () => ({
+	enabled: false,
+	every: "day",
+	hour: 2,
+	tool: "pgbackrest",
+	kind: "full",
+	keep: 7
+});
 var KEY = "kontur-vault-v1";
 function row(n, cols) {
 	return `(${cols.map((c, i) => {
@@ -77,6 +85,14 @@ function seedState() {
 				ssl: true,
 				region: "eu-central",
 				pgVersion: 16,
+				sshUser: "postgres",
+				sshPort: 22,
+				schedule: {
+					...defaultSchedule(),
+					tool: "pgbackrest",
+					kind: "full",
+					enabled: true
+				},
 				mode: "demo",
 				databases: [{
 					name: "payments",
@@ -150,6 +166,14 @@ function seedState() {
 				ssl: true,
 				region: "eu-north",
 				pgVersion: 15,
+				sshUser: "postgres",
+				sshPort: 22,
+				schedule: {
+					...defaultSchedule(),
+					tool: "barman",
+					every: "week",
+					hour: 3
+				},
 				mode: "demo",
 				databases: [{
 					name: "warehouse",
@@ -185,6 +209,14 @@ function seedState() {
 				ssl: false,
 				region: "local-dc",
 				pgVersion: 17,
+				sshUser: "postgres",
+				sshPort: 22,
+				schedule: {
+					...defaultSchedule(),
+					tool: "pg_probackup",
+					kind: "incr",
+					hour: 4
+				},
 				mode: "demo",
 				databases: [{
 					name: "app",
@@ -221,6 +253,7 @@ function seedState() {
 			bytes: 48211,
 			sql: "-- предыдущий ночной дамп сохранён на узле\n",
 			tool: "pg_dump",
+			backupKind: "full",
 			status: "ok",
 			kind: "backup",
 			message: "Ночной логический дамп payments"
@@ -236,11 +269,16 @@ function loadState() {
 		if (!Array.isArray(parsed.servers) || !Array.isArray(parsed.jobs)) return seedState();
 		parsed.servers = parsed.servers.map((server) => ({
 			...server,
-			pgVersion: PG_VERSIONS.includes(server.pgVersion) ? server.pgVersion : 16
+			pgVersion: PG_VERSIONS.includes(server.pgVersion) ? server.pgVersion : 16,
+			sshUser: server.sshUser || "postgres",
+			sshPort: server.sshPort || 22,
+			schedule: server.schedule ?? defaultSchedule()
 		}));
 		parsed.jobs = parsed.jobs.map((job) => ({
 			...job,
-			tool: job.tool ?? "pg_dump"
+			tool: job.tool === "wal-g" || !job.tool ? "pg_dump" : job.tool,
+			kind: job.kind === "restore" ? "restore" : "backup",
+			backupKind: job.backupKind ?? "full"
 		}));
 		return parsed;
 	} catch {
@@ -284,29 +322,54 @@ var dumpSchema = connSchema.extend({ maxRows: number().int().min(1).max(200).def
 var dumpPostgres = createServerFn({ method: "POST" }).validator(dumpSchema).handler(createSsrRpc("37ce827c1a1bc543a1b396d8fd93bac320c97e1c436046bb4690d65607b891b0"));
 var restoreSchema = connSchema.extend({ sql: string().min(1).max(15e5) });
 var restorePostgres = createServerFn({ method: "POST" }).validator(restoreSchema).handler(createSsrRpc("b5e66b277df4a328740ba1c66e5f5fd295bfd026ad5802204e3d1f2353b45764"));
-var detectHostTools = createServerFn({ method: "GET" }).handler(createSsrRpc("af73ff3bbcae638eba2ad015abeebd3c82ba45a07d6985cb1996c5fbf249122b"));
+createServerFn({ method: "GET" }).handler(createSsrRpc("af73ff3bbcae638eba2ad015abeebd3c82ba45a07d6985cb1996c5fbf249122b"));
+var sshSchema = object({
+	host: string().regex(/^[A-Za-z0-9._-]{1,253}$/),
+	sshPort: number().int().min(1).max(65535),
+	sshUser: string().regex(/^[a-z_][a-z0-9_-]{0,31}$/i)
+});
+var ident = string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/);
+var inspectDbServer = createServerFn({ method: "POST" }).validator(sshSchema).handler(createSsrRpc("17079bfeef4d72b4dbd7500e8831f390427d23e11e08fae3ebc419f106677afb"));
+var storeSchema = object({
+	serverName: string().trim().min(1).max(80),
+	database: ident,
+	tool: _enum([
+		"pg_dump",
+		"pgbackrest",
+		"barman",
+		"pg_probackup"
+	]),
+	kind: _enum(["full", "incr"]),
+	body: string().max(4e6)
+});
+var storeKonturBackup = createServerFn({ method: "POST" }).validator(storeSchema).handler(createSsrRpc("731ecb66f2457d728b22819c3164d7f701c064488939d0c5e6d5051a5e5d2775"));
+var listKonturBackups = createServerFn({ method: "GET" }).handler(createSsrRpc("588b01f32a917835661b7bdd0f3342dc1ff06a1df4483faa164109ba13e15c84"));
+var diskFree = createServerFn({ method: "GET" }).handler(createSsrRpc("63d64fa65d532eb8f1191f213d79776760c81dcf26b90bd06fa84e564c12776f"));
+var rotateBackups = createServerFn({ method: "POST" }).validator(object({ keep: number().int().min(1).max(100) })).handler(createSsrRpc("17cc573b55325613c494f1c520eeeb50f87fd240526482abad6971811252b883"));
+var readSchema = object({ path: string().min(1).max(300) });
+var readKonturBackup = createServerFn({ method: "POST" }).validator(readSchema).handler(createSsrRpc("688b826871ac30804be0ad165b62a297c7da99b9e7f9fb69c155158ea7d40191"));
 var TOOLS = [
 	"pg_dump",
 	"pgbackrest",
 	"barman",
-	"wal-g"
+	"pg_probackup"
 ];
 var TOOL_META = {
 	pg_dump: {
 		title: "pg_dump",
-		blurb: "Логический дамп одной базы. Восстановление через psql."
+		blurb: "Логический дамп одной базы. Инкрементов нет — всегда полный."
 	},
 	pgbackrest: {
 		title: "pgBackRest",
-		blurb: "Полные и инкрементальные копии со stanza и PITR."
+		blurb: "Полные и инкрементальные копии, stanza и PITR."
 	},
 	barman: {
 		title: "Barman",
-		blurb: "Централизованный бэкап и recover на указанный момент."
+		blurb: "Полный бэкап или инкремент через reuse-backup."
 	},
-	"wal-g": {
-		title: "wal-g",
-		blurb: "Непрерывная архивация WAL и backup-push в объектное хранилище."
+	pg_probackup: {
+		title: "pg_probackup",
+		blurb: "Полный или DELTA в собственном каталоге экземпляра."
 	}
 };
 function clientBin(server, bin) {
@@ -318,12 +381,14 @@ function stanza(server) {
 function shQuote(value) {
 	return `'${value.replaceAll("'", `'\\''`)}'`;
 }
-function backupPlan(tool, server, database) {
+function backupPlan(tool, server, database, kind) {
 	const name = stanza(server);
 	const host = `${server.host}:${server.port}`;
+	const mode = kind === "incr" ? "incr" : "full";
 	if (tool === "pg_dump") return [
 		`#!/bin/sh`,
 		`# pg_dump ${server.pgVersion} — ${server.name} / ${database}`,
+		`# запрошен ${mode}; pg_dump всегда пишет полный дамп`,
 		`export PGPASSWORD=${shQuote(server.password)}`,
 		`${clientBin(server, "pg_dump")} --host=${shQuote(server.host)} --port=${server.port} --username=${shQuote(server.user)} \\`,
 		`  --format=custom --file=${shQuote(`${database}.dump`)} ${shQuote(database)}`,
@@ -331,22 +396,23 @@ function backupPlan(tool, server, database) {
 	].join("\n");
 	if (tool === "pgbackrest") return [
 		`#!/bin/sh`,
-		`# pgBackRest stanza ${name}, PostgreSQL ${server.pgVersion}`,
-		`pgbackrest --stanza=${name} --type=full backup`,
+		`# pgBackRest stanza ${name}, PostgreSQL ${server.pgVersion}, ${mode}`,
+		`pgbackrest --stanza=${name} --type=${mode} backup`,
 		`pgbackrest --stanza=${name} info`
 	].join("\n");
 	if (tool === "barman") return [
 		`#!/bin/sh`,
-		`# Barman server ${name}, PostgreSQL ${server.pgVersion}`,
+		`# Barman server ${name}, PostgreSQL ${server.pgVersion}, ${mode}`,
 		`barman check ${name}`,
-		`barman backup ${name}`,
+		kind === "incr" ? `barman backup --reuse-backup=link ${name}` : `barman backup ${name}`,
 		`barman list-backup ${name}`
 	].join("\n");
+	const pbMode = kind === "incr" ? "DELTA" : "FULL";
 	return [
 		`#!/bin/sh`,
-		`# wal-g backup-push — PostgreSQL ${server.pgVersion}, ${database} @ ${host}`,
-		`wal-g backup-push ${shQuote(`/var/lib/postgresql/${server.pgVersion}/main`)}`,
-		`wal-g backup-list`
+		`# pg_probackup ${pbMode} — ${database} @ ${host}`,
+		`pg_probackup backup -B /var/lib/pg_probackup --instance=${name} -b ${pbMode}`,
+		`pg_probackup show -B /var/lib/pg_probackup --instance=${name}`
 	].join("\n");
 }
 function restorePlan(tool, server, database, target) {
@@ -370,8 +436,8 @@ function restorePlan(tool, server, database, target) {
 	].join("\n");
 	return [
 		`#!/bin/sh`,
-		`BACKUP=$(wal-g backup-list | awk 'NR==2 {print $1}')`,
-		`wal-g backup-fetch /var/lib/postgresql/restore/${target} "$BACKUP"`
+		`pg_probackup restore -B /var/lib/pg_probackup --instance=${name} -D /var/lib/postgresql/restore/${target} -i latest`,
+		`# режим каталога FULL`
 	].join("\n");
 }
 function Home() {
@@ -382,16 +448,25 @@ function Home() {
 	const [notice, setNotice] = (0, import_react.useState)(null);
 	const [restoreId, setRestoreId] = (0, import_react.useState)(null);
 	const [targetDb, setTargetDb] = (0, import_react.useState)("");
-	const [tool, setTool] = (0, import_react.useState)("pg_dump");
-	const [hostTools, setHostTools] = (0, import_react.useState)(null);
+	const [tool, setTool] = (0, import_react.useState)("pgbackrest");
+	const [kind, setKind] = (0, import_react.useState)("full");
+	const [keep, setKeep] = (0, import_react.useState)(7);
+	const [disk, setDisk] = (0, import_react.useState)(null);
+	const [remoteTools, setRemoteTools] = (0, import_react.useState)({});
+	const [stored, setStored] = (0, import_react.useState)([]);
+	async function refreshStored() {
+		const listed = await listKonturBackups();
+		if (listed.ok) setStored(listed.files);
+	}
 	(0, import_react.useEffect)(() => {
 		const loaded = loadState();
 		setState(loaded);
 		setSelectedId(loaded.servers[0]?.id ?? "");
-		detectHostTools().then(setHostTools).catch(() => setHostTools({
-			clients: [],
-			tools: []
-		}));
+		refreshStored().catch(() => setStored([]));
+		diskFree().then((info) => setDisk({
+			total: info.total,
+			free: info.free
+		})).catch(() => setDisk(null));
 	}, []);
 	function commit(next) {
 		setState(next);
@@ -434,25 +509,34 @@ function Home() {
 				} });
 				if (!result.ok) throw new Error(result.error);
 				sql = result.sql;
-				message = "Снят живой логический дамп pg_dump";
+				message = "Дамп снят с узла и записан в свой каталог на Hamster";
 			} else if (tool === "pg_dump") {
-				await wait(700);
+				await wait(400);
 				sql = buildDump(server, dbName);
-				message = "Снят дамп pg_dump по каталогу демо-узла";
+				message = "Полный демо-дамп записан в свой каталог на Hamster";
 			} else {
-				await wait(500);
-				sql = backupPlan(tool, server, dbName);
-				message = `План ${TOOL_META[tool].title} для хоста бэкапа`;
+				await wait(300);
+				sql = backupPlan(tool, server, dbName, kind);
+				message = `${TOOL_META[tool].title}, ${kind === "incr" ? "инкремент" : "полный"}. Каталог на Hamster.`;
 			}
+			const storedFile = await storeKonturBackup({ data: {
+				serverName: server.name,
+				database: dbName,
+				tool,
+				kind: tool === "pg_dump" ? "full" : kind,
+				body: sql
+			} });
 			const job = {
 				id: crypto.randomUUID(),
 				serverId: server.id,
 				serverName: server.name,
 				database: dbName,
 				createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-				bytes: new Blob([sql]).size,
-				sql,
+				bytes: storedFile.bytes,
+				sql: sql.slice(0, 4e3),
 				tool,
+				backupKind: tool === "pg_dump" ? "full" : kind,
+				storedPath: storedFile.path,
 				status: "ok",
 				kind: "backup",
 				message
@@ -461,7 +545,8 @@ function Home() {
 				...state,
 				jobs: [job, ...state.jobs].slice(0, 40)
 			});
-			setNotice(`${TOOL_META[tool].title}: ${dbName} готов`);
+			await refreshStored();
+			setNotice(`${TOOL_META[tool].title}: каталог на Hamster`);
 		} catch (error) {
 			setNotice(error instanceof Error ? error.message : "Ошибка дампа");
 		} finally {
@@ -498,6 +583,7 @@ function Home() {
 				bytes: new Blob([script]).size,
 				sql: script,
 				tool: activeTool,
+				backupKind: job.backupKind ?? "full",
 				status: "ok",
 				kind: "restore",
 				message: activeTool === "pg_dump" ? `Восстановлено pg_dump из ${job.database}` : `План ${TOOL_META[activeTool].title} для ${targetDb}`
@@ -547,8 +633,27 @@ function Home() {
 				pgVersion
 			} : item)
 		});
-		const client = hostTools?.clients.find((item) => item.major === major);
-		setNotice(client ? `PostgreSQL ${major} на узле, клиент pg_dump ${major} найден` : `PostgreSQL ${major} на узле. Подходящий клиент pg_dump на этом хосте не найден. Баз: ${databases.length}`);
+		const sshUser = profile.sshUser || "postgres";
+		const sshPort = profile.sshPort || 22;
+		if (profile.mode !== "live") {
+			setNotice(`PostgreSQL ${major}. Демо-узел: проверка средств по SSH пропускается.`);
+			return;
+		}
+		const remote = await inspectDbServer({ data: {
+			host: profile.host,
+			sshPort,
+			sshUser
+		} });
+		if (!remote.ok) {
+			setNotice(`PostgreSQL ${major}. SSH ${sshUser}@${profile.host}: ${remote.error}`);
+			return;
+		}
+		setRemoteTools((current) => ({
+			...current,
+			[profile.id]: remote.tools
+		}));
+		const ready = remote.tools.filter((item) => item.installed).map((item) => item.id);
+		setNotice(ready.length ? `PostgreSQL ${major}. На сервере баз есть: ${ready.join(", ")}` : `PostgreSQL ${major}. На сервере баз ни одно средство не найдено`);
 	}
 	function removeServer(id) {
 		if (!state) return;
@@ -566,9 +671,18 @@ function Home() {
 			jobs: state.jobs.filter((j) => j.id !== id)
 		});
 	}
-	function download(job) {
-		const ext = (job.tool ?? "pg_dump") === "pg_dump" ? "sql" : "sh";
-		const blob = new Blob([job.sql], { type: "text/plain" });
+	async function download(job) {
+		let body = job.sql;
+		if (job.storedPath) {
+			const file = await readKonturBackup({ data: { path: job.storedPath } });
+			if (!file.ok) {
+				setNotice(file.error);
+				return;
+			}
+			body = file.body;
+		}
+		const ext = (job.tool ?? "pg_dump") === "pg_dump" ? "sql" : "log";
+		const blob = new Blob([body], { type: "text/plain" });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
@@ -590,15 +704,15 @@ function Home() {
 					children: [/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "font-mono text-xs tracking-widest text-primary uppercase",
-							children: "PostgreSQL"
+							children: "админ hamster"
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", {
 							className: "text-2xl font-medium tracking-tight",
-							children: "Контур"
+							children: "Hamster"
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "mt-1 max-w-xl text-sm text-muted",
-							children: "Резервные копии и восстановление баз на удалённых серверах. Средство выбирается для каждой операции: pg_dump, pgBackRest, Barman или wal-g."
+							children: "Бэкапы PostgreSQL: pgBackRest, Barman, pg_probackup или pg_dump. Расписание, полный или инкрементный тип, отдельный каталог и ретенция."
 						})
 					] }), /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", {
 						type: "button",
@@ -611,30 +725,37 @@ function Home() {
 			/* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", {
 				className: "border-b border-border px-4 py-3 sm:px-8",
 				children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
-					className: "mx-auto flex max-w-6xl flex-col gap-2",
+					className: "mx-auto max-w-6xl",
 					children: [
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 							className: "text-xs text-muted",
-							children: "Средства на этом хосте"
+							children: "Каталоги бэкапов на Hamster"
 						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
-							className: "flex flex-wrap gap-2",
-							children: (hostTools?.tools ?? TOOLS.map((id) => ({
-								id,
-								installed: false,
-								version: null
-							}))).map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
-								className: `rounded-lg border px-3 py-2 text-xs ${item.installed ? "border-primary text-fg" : "border-border text-muted"}`,
+						disk && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+							className: "mt-1 text-sm text-fg",
+							children: [
+								"Свободно ",
+								formatBytes(disk.free),
+								" из ",
+								formatBytes(disk.total),
+								" (",
+								Math.round(disk.free / Math.max(disk.total, 1) * 100),
+								"%)"
+							]
+						}),
+						stored.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+							className: "mt-1 text-sm text-muted",
+							children: "Каталогов ещё нет. Каждый бэкап получает свой каталог."
+						}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("ul", {
+							className: "mt-2 grid gap-1",
+							children: stored.slice(0, 5).map((file) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", {
+								className: "font-mono text-xs text-muted",
 								children: [
-									TOOL_META[item.id].title,
-									": ",
-									item.installed ? item.version : "не установлено"
+									file.path.split("/").slice(-2).join("/"),
+									" · ",
+									formatBytes(file.bytes)
 								]
-							}, item.id))
-						}),
-						/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
-							className: "text-xs text-muted",
-							children: hostTools && hostTools.clients.length > 0 ? `Клиенты pg_dump: ${hostTools.clients.map((item) => String(item.major)).join(", ")}` : "Клиенты pg_dump в /usr/lib/postgresql не найдены. Версия узла всё равно читается по SHOW server_version_num."
+							}, file.path))
 						})
 					]
 				})
@@ -772,12 +893,29 @@ function Home() {
 										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
 											className: "mt-2 text-sm text-muted",
 											children: [
-												"Клиент pg_dump и pg_restore берётся из /usr/lib/postgresql/",
-												server.pgVersion ?? 16,
-												"/bin — не старше сервера."
+												"Клиент на сервере баз ищется по SSH (",
+												server.sshUser || "postgres",
+												":",
+												server.sshPort || 22,
+												"). Каталог копии остаётся на Hamster."
 											]
 										})
 									]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+									className: "flex flex-wrap gap-2",
+									children: (remoteTools[server.id] ?? TOOLS.map((id) => ({
+										id,
+										installed: false,
+										version: null
+									}))).map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", {
+										className: `rounded-lg border px-3 py-2 text-xs ${item.installed ? "border-primary text-fg" : "border-border text-muted"}`,
+										children: [
+											TOOL_META[item.id].title,
+											": ",
+											item.installed ? item.version : "на сервере баз не найдено"
+										]
+									}, item.id))
 								}),
 								/* @__PURE__ */ (0, import_jsx_runtime.jsx)(AddDatabase, { onAdd: (name) => {
 									if (server.databases.some((db) => db.name === name)) {
@@ -816,6 +954,148 @@ function Home() {
 										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 											className: "mt-2 text-sm text-muted",
 											children: TOOL_META[tool].blurb
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
+											className: "mt-3 text-xs text-muted",
+											children: "Тип"
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", {
+											className: "mt-2 flex gap-2",
+											children: ["full", "incr"].map((item) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+												type: "button",
+												onClick: () => setKind(item),
+												className: `h-10 rounded-lg border px-3 text-sm ${kind === item ? "border-primary bg-surface-2 text-fg" : "border-border text-muted"}`,
+												children: item === "full" ? "Полный" : "Инкрементный"
+											}, item))
+										})
+									]
+								}),
+								/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", {
+									className: "rounded-xl border border-border bg-surface p-4",
+									onSubmit: (event) => {
+										event.preventDefault();
+										commit({
+											...state,
+											servers: state.servers.map((item) => item.id === server.id ? {
+												...item,
+												schedule: {
+													...item.schedule,
+													enabled: true,
+													tool,
+													kind: tool === "pg_dump" ? "full" : kind,
+													keep
+												}
+											} : item)
+										});
+										setNotice(`Расписание: ${tool === "pg_dump" ? "полный pg_dump" : kind === "incr" ? "инкремент" : "полный"} ${TOOL_META[tool].title}, хранить ${keep}`);
+									},
+									children: [
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "text-xs text-muted",
+											children: ["Расписание · ", server.schedule?.enabled ? "включено" : "выключено"]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+											className: "mt-2 flex flex-wrap items-end gap-2",
+											children: [
+												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+													className: "text-xs text-muted",
+													children: ["Когда", /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("select", {
+														value: server.schedule?.every ?? "day",
+														onChange: (event) => {
+															const every = event.target.value === "week" ? "week" : "day";
+															commit({
+																...state,
+																servers: state.servers.map((item) => item.id === server.id ? {
+																	...item,
+																	schedule: {
+																		...item.schedule,
+																		every
+																	}
+																} : item)
+															});
+														},
+														className: "mt-1 block h-10 rounded-lg border border-border bg-bg px-2 text-sm text-fg",
+														children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+															value: "day",
+															children: "каждый день"
+														}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", {
+															value: "week",
+															children: "раз в неделю"
+														})]
+													})]
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+													className: "text-xs text-muted",
+													children: ["Час", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+														type: "number",
+														min: 0,
+														max: 23,
+														value: server.schedule?.hour ?? 2,
+														onChange: (event) => {
+															const hour = Math.min(23, Math.max(0, Number(event.target.value) || 0));
+															commit({
+																...state,
+																servers: state.servers.map((item) => item.id === server.id ? {
+																	...item,
+																	schedule: {
+																		...item.schedule,
+																		hour
+																	}
+																} : item)
+															});
+														},
+														className: "mt-1 block h-10 w-20 rounded-lg border border-border bg-bg px-2 text-sm text-fg"
+													})]
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", {
+													className: "text-xs text-muted",
+													children: ["Хранить", /* @__PURE__ */ (0, import_jsx_runtime.jsx)("input", {
+														type: "number",
+														min: 1,
+														max: 100,
+														value: keep,
+														onChange: (event) => setKeep(Math.min(100, Math.max(1, Number(event.target.value) || 1))),
+														className: "mt-1 block h-10 w-20 rounded-lg border border-border bg-bg px-2 text-sm text-fg"
+													})]
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+													type: "submit",
+													className: "h-10 rounded-lg bg-primary px-3 text-sm font-medium text-primary-fg",
+													children: "Сохранить расписание"
+												}),
+												/* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", {
+													type: "button",
+													className: "h-10 rounded-lg border border-border px-3 text-sm",
+													onClick: () => {
+														rotateBackups({ data: { keep } }).then(async (result) => {
+															await refreshStored();
+															const info = await diskFree();
+															setDisk({
+																total: info.total,
+																free: info.free
+															});
+															setNotice(result.removed ? `Ретенция удалила каталогов: ${result.removed}` : "Старых каталогов нет");
+														});
+													},
+													children: "Ротация"
+												})
+											]
+										}),
+										/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", {
+											className: "mt-2 text-xs text-muted",
+											children: [
+												"Сейчас: ",
+												server.schedule?.every === "week" ? "еженедельно" : "ежедневно",
+												" в ",
+												server.schedule?.hour ?? 2,
+												":00,",
+												" ",
+												server.schedule?.tool ? TOOL_META[server.schedule.tool].title : "средство не выбрано",
+												", хранить",
+												" ",
+												server.schedule?.keep ?? keep,
+												". Ротация удаляет каталоги старше лимита."
+											]
 										})
 									]
 								}),
@@ -1016,6 +1296,8 @@ function AddServer({ onClose, onSave }) {
 	const [databasesText, setDatabasesText] = (0, import_react.useState)("postgres");
 	const [ssl, setSsl] = (0, import_react.useState)(true);
 	const [pgVersion, setPgVersion] = (0, import_react.useState)(16);
+	const [sshUser, setSshUser] = (0, import_react.useState)("postgres");
+	const [sshPort, setSshPort] = (0, import_react.useState)("22");
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("dialog", {
 		open: true,
 		className: "fixed inset-0 z-20 m-0 flex h-full w-full items-end justify-center bg-black/50 p-4 sm:items-center",
@@ -1037,6 +1319,16 @@ function AddServer({ onClose, onSave }) {
 					ssl,
 					region: "свой",
 					pgVersion,
+					sshUser: sshUser.trim() || "postgres",
+					sshPort: Number(sshPort) || 22,
+					schedule: {
+						enabled: false,
+						every: "day",
+						hour: 2,
+						tool: "pgbackrest",
+						kind: "full",
+						keep: 7
+					},
 					mode: "live",
 					databases: unique.map((dbName) => ({
 						name: dbName,
@@ -1061,7 +1353,7 @@ function AddServer({ onClose, onSave }) {
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", {
 					className: "mb-3 text-xs text-muted",
-					children: "Пароль остаётся в браузере. Несколько баз — через запятую. «Проверить» на карточке узла подтянет реальный список с хоста."
+					children: "Пароль базы остаётся в браузере. Проверка средств идёт по SSH на сервер баз. Каталог бэкапа создаётся на Hamster."
 				}),
 				/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 					className: "grid gap-2",
@@ -1079,13 +1371,25 @@ function AddServer({ onClose, onSave }) {
 						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 							className: "grid grid-cols-2 gap-2",
 							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-								label: "Порт",
+								label: "Порт PostgreSQL",
 								value: port,
 								onChange: setPort
 							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
-								label: "Пользователь",
+								label: "Пользователь базы",
 								value: user,
 								onChange: setUser
+							})]
+						}),
+						/* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
+							className: "grid grid-cols-2 gap-2",
+							children: [/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+								label: "SSH-пользователь",
+								value: sshUser,
+								onChange: setSshUser
+							}), /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {
+								label: "SSH-порт",
+								value: sshPort,
+								onChange: setSshPort
 							})]
 						}),
 						/* @__PURE__ */ (0, import_jsx_runtime.jsx)(Field, {

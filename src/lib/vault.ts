@@ -1,4 +1,4 @@
-import type { BackupTool } from "@/lib/tools";
+import type { BackupKind, BackupTool } from "@/lib/tools";
 
 export type TableInfo = { name: string; rows: number; cols: string[] };
 
@@ -12,6 +12,25 @@ export type DatabaseInfo = {
 export const PG_VERSIONS = [14, 15, 16, 17, 18] as const;
 export type PgVersion = (typeof PG_VERSIONS)[number];
 
+export type Schedule = {
+  enabled: boolean;
+  every: "day" | "week";
+  hour: number;
+  tool: BackupTool;
+  kind: BackupKind;
+  keep: number;
+  lastRun?: string;
+};
+
+const defaultSchedule = (): Schedule => ({
+  enabled: false,
+  every: "day",
+  hour: 2,
+  tool: "pgbackrest",
+  kind: "full",
+  keep: 7,
+});
+
 export type ServerProfile = {
   id: string;
   name: string;
@@ -22,6 +41,9 @@ export type ServerProfile = {
   ssl: boolean;
   region: string;
   pgVersion: PgVersion;
+  sshUser: string;
+  sshPort: number;
+  schedule: Schedule;
   mode: "demo" | "live";
   databases: DatabaseInfo[];
 };
@@ -35,6 +57,8 @@ export type BackupJob = {
   bytes: number;
   sql: string;
   tool: BackupTool;
+  backupKind: BackupKind;
+  storedPath?: string;
   status: "ok" | "failed";
   kind: "backup" | "restore";
   message: string;
@@ -120,6 +144,9 @@ export function seedState(): VaultState {
         ssl: true,
         region: "eu-central",
         pgVersion: 16,
+        sshUser: "postgres",
+        sshPort: 22,
+        schedule: { ...defaultSchedule(), tool: "pgbackrest", kind: "full", enabled: true },
         mode: "demo",
         databases: [
           {
@@ -153,6 +180,9 @@ export function seedState(): VaultState {
         ssl: true,
         region: "eu-north",
         pgVersion: 15,
+        sshUser: "postgres",
+        sshPort: 22,
+        schedule: { ...defaultSchedule(), tool: "barman", every: "week", hour: 3 },
         mode: "demo",
         databases: [
           {
@@ -176,6 +206,9 @@ export function seedState(): VaultState {
         ssl: false,
         region: "local-dc",
         pgVersion: 17,
+        sshUser: "postgres",
+        sshPort: 22,
+        schedule: { ...defaultSchedule(), tool: "pg_probackup", kind: "incr", hour: 4 },
         mode: "demo",
         databases: [
           {
@@ -200,6 +233,7 @@ export function seedState(): VaultState {
         bytes: 48211,
         sql: "-- предыдущий ночной дамп сохранён на узле\n",
         tool: "pg_dump",
+        backupKind: "full",
         status: "ok",
         kind: "backup",
         message: "Ночной логический дамп payments",
@@ -218,8 +252,16 @@ export function loadState(): VaultState {
     parsed.servers = parsed.servers.map((server) => ({
       ...server,
       pgVersion: PG_VERSIONS.includes(server.pgVersion) ? server.pgVersion : 16,
+      sshUser: server.sshUser || "postgres",
+      sshPort: server.sshPort || 22,
+      schedule: server.schedule ?? defaultSchedule(),
     }));
-    parsed.jobs = parsed.jobs.map((job) => ({ ...job, tool: job.tool ?? "pg_dump" }));
+    parsed.jobs = parsed.jobs.map((job) => ({
+      ...job,
+      tool: job.tool === ("wal-g" as BackupTool) || !job.tool ? "pg_dump" : job.tool,
+      kind: job.kind === "restore" ? "restore" : "backup",
+      backupKind: job.backupKind ?? "full",
+    }));
     return parsed;
   } catch {
     return seedState();
