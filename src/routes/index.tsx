@@ -842,20 +842,40 @@ function AddServer({
   const [pgVersion, setPgVersion] = useState<PgVersion>(16);
   const [sshUser, setSshUser] = useState("postgres");
   const [sshPort, setSshPort] = useState("22");
+  const [error, setError] = useState("");
 
   return (
-    <dialog open className="fixed inset-0 z-20 m-0 flex h-full w-full items-end justify-center bg-black/50 p-4 sm:items-center">
+    <dialog open className="fixed inset-0 z-20 m-0 flex h-full max-h-none w-full items-end justify-center bg-black/50 p-4 sm:items-center">
       <form
-        className="w-full max-w-md rounded-xl border border-border bg-surface p-4"
+        noValidate
+        className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-xl border border-border bg-surface p-4"
         onSubmit={(event) => {
           event.preventDefault();
           const portNum = Number(port);
-          if (!name.trim() || !host.trim() || !Number.isInteger(portNum)) return;
+          const sshPortNum = Number(sshPort);
+          if (!name.trim() || !host.trim()) {
+            setError("Укажите имя узла и хост.");
+            return;
+          }
+          if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+            setError("Порт PostgreSQL должен быть числом от 1 до 65535.");
+            return;
+          }
+          if (!Number.isInteger(sshPortNum) || sshPortNum < 1 || sshPortNum > 65535) {
+            setError("SSH-порт должен быть числом от 1 до 65535.");
+            return;
+          }
           const names = databasesText
             .split(/[\s,;]+/)
             .map((item) => item.trim())
             .filter(Boolean);
           const unique = [...new Set(names.length ? names : ["postgres"])];
+          const bad = unique.find((dbName) => !/^[A-Za-z_][A-Za-z0-9_-]{0,62}$/.test(dbName));
+          if (bad) {
+            setError(`Имя базы «${bad}» не подходит. Буквы, цифры, _ и -.`);
+            return;
+          }
+          setError("");
           onSave({
             id: crypto.randomUUID(),
             name: name.trim(),
@@ -867,7 +887,7 @@ function AddServer({
             region: "свой",
             pgVersion,
             sshUser: sshUser.trim() || "postgres",
-            sshPort: Number(sshPort) || 22,
+            sshPort: sshPortNum,
             schedule: {
               enabled: false,
               every: "day",
@@ -930,6 +950,7 @@ function AddServer({
             </div>
           </div>
         </div>
+        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
         <button type="submit" className="mt-3 h-11 w-full rounded-lg bg-primary text-sm font-medium text-primary-fg">
           Добавить узел
         </button>
@@ -940,13 +961,19 @@ function AddServer({
 
 function AddDatabase({ onAdd }: { onAdd: (name: string) => void }) {
   const [name, setName] = useState("");
+  const [error, setError] = useState("");
   return (
     <form
+      noValidate
       className="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-surface p-4"
       onSubmit={(event) => {
         event.preventDefault();
         const next = name.trim();
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(next)) return;
+        if (!/^[A-Za-z_][A-Za-z0-9_-]{0,62}$/.test(next)) {
+          setError("Имя базы: с буквы или _, дальше буквы, цифры, _ и -.");
+          return;
+        }
+        setError("");
         onAdd(next);
         setName("");
       }}
@@ -963,6 +990,7 @@ function AddDatabase({ onAdd }: { onAdd: (name: string) => void }) {
       <button type="submit" className="h-11 rounded-lg border border-border px-3 text-sm">
         Добавить базу
       </button>
+      {error && <p className="w-full text-sm text-danger">{error}</p>}
     </form>
   );
 }
@@ -982,7 +1010,7 @@ function Field({
     <label className="block text-xs text-muted">
       {label}
       <input
-        required={label !== "Пароль"}
+        required={false}
         type={secret ? "password" : "text"}
         value={value}
         onChange={(event) => onChange(event.target.value)}
